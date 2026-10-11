@@ -99,24 +99,41 @@ final class Store {
         return best;
     }
 
-    /**
-     * The account a request belongs to, or null. `requestSessionHeaders` are the request's own
-     * session headers (from {@link Credentials#sessionHeaders}); the account is the one sharing
-     * the most identifying values with them, the most recently used breaking a tie.
-     */
     synchronized Identity match(Map<String, String> requestSessionHeaders) {
+        return match(requestSessionHeaders, "");
+    }
+
+    /**
+     * The account a request belongs to, or null. The account is the one sharing the most
+     * identifying values with the request; a value it used before a rotation still counts, but
+     * less than a current one, so fresh traffic always wins over old. The request's host (when
+     * known) breaks a tie in favour of the account seen on that host. The most recently used
+     * account breaks any remaining tie.
+     */
+    synchronized Identity match(Map<String, String> requestSessionHeaders, String host) {
         Set<String> values = Credentials.identifyingValues(requestSessionHeaders);
         if (values.isEmpty()) {
             return null;
         }
+        String registrable = Credentials.registrable(host);
         Identity best = null;
         int bestScore = 0;
         for (Identity identity : identities) {
             int score = 0;
             for (String value : identity.identifyingValues()) {
                 if (values.contains(value)) {
-                    score++;
+                    score += 10;                        // a current value: the strong signal
                 }
+            }
+            if (score == 0) {
+                for (String value : identity.pastValues()) {
+                    if (values.contains(value)) {
+                        score += 2;                     // a value rotated away from: weaker, but attributes old traffic
+                    }
+                }
+            }
+            if (score > 0 && !registrable.isEmpty() && registrable.equals(Credentials.registrable(identity.host()))) {
+                score += 1;                             // same site: a tie-breaker, never a match on its own
             }
             if (score > bestScore || (score == bestScore && best != null && score > 0
                     && identity.updatedAt() > best.updatedAt())) {

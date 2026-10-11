@@ -82,9 +82,9 @@ final class WhoAmITab extends JPanel {
         }
     }
 
-    static final int COL_COLOUR = 0, COL_NAME = 1, COL_HOST = 2, COL_SUBJECT = 3, COL_ROLE = 4,
-            COL_EXPIRES = 5, COL_SEEN = 6, COL_HEADERS = 7;
-    private static final String[] ACCOUNT_COLUMNS = {"", "Name", "Host", "Subject (JWT)", "Role", "Token expires", "Seen", "Session headers"};
+    static final int COL_COLOUR = 0, COL_NAME = 1, COL_STATE = 2, COL_HOST = 3, COL_SUBJECT = 4, COL_ROLE = 5,
+            COL_EXPIRES = 6, COL_SEEN = 7, COL_HEADERS = 8;
+    private static final String[] ACCOUNT_COLUMNS = {"", "Name", "Status", "Host", "Subject (JWT)", "Role", "Token expires", "Seen", "Session headers"};
     private static final String[] DISCOVERED_COLUMNS = {"Suggested name", "Host", "Requests", "Subject (JWT)", "Sample path"};
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
@@ -152,7 +152,7 @@ final class WhoAmITab extends JPanel {
         for (int c = 1; c < ACCOUNT_COLUMNS.length; c++) {
             table.getColumnModel().getColumn(c).setCellRenderer(cell);
         }
-        int[] widths = {30, 170, 190, 200, 130, 150, 50, 220};
+        int[] widths = {30, 160, 70, 180, 190, 120, 150, 50, 200};
         for (int i = 0; i < widths.length; i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         }
@@ -513,9 +513,17 @@ final class WhoAmITab extends JPanel {
             setFont(getFont().deriveFont(column == COL_NAME ? Font.BOLD : Font.PLAIN));
             if (!sel) {
                 comp.setBackground(zebra(t, r));
-                boolean expired = column == COL_EXPIRES && String.valueOf(v).contains("expired");
-                boolean quiet = column == COL_SEEN && "0".equals(String.valueOf(v));
-                comp.setForeground(expired ? new Color(0xE2544B) : quiet ? new Color(0x9AA0A6) : t.getForeground());
+                String text = String.valueOf(v);
+                Color fg = t.getForeground();
+                if (column == COL_EXPIRES && text.contains("expired")) {
+                    fg = new Color(0xE2544B);
+                } else if (column == COL_SEEN && "0".equals(text)) {
+                    fg = new Color(0x9AA0A6);
+                } else if (column == COL_STATE) {
+                    fg = text.equalsIgnoreCase("Active") ? new Color(0x3C9A54)
+                            : text.equalsIgnoreCase("Expired") ? new Color(0xE2544B) : new Color(0x9AA0A6);
+                }
+                comp.setForeground(fg);
             }
             return comp;
         }
@@ -563,6 +571,7 @@ final class WhoAmITab extends JPanel {
             switch (c) {
                 case COL_COLOUR: return "";
                 case COL_NAME: return identity.name();
+                case COL_STATE: return pretty(identity.state(System.currentTimeMillis() / 1000));
                 case COL_HOST: return identity.host();
                 case COL_SUBJECT: return jwt == null ? "" : jwt.subject();
                 case COL_ROLE: return jwt == null ? "" : jwt.role();

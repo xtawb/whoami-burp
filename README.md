@@ -40,10 +40,16 @@ One jar, no dependencies, Burp Suite Community and Professional.
 
 ## The tab
 
-A table of accounts — colour, name, host, and, from the JWT, subject, role and
-expiry — with the selected account's session headers shown below. Values are
-**masked** by default (they are live credentials); *Reveal values* shows them.
-Rename, recolour and delete from the toolbar.
+A table of accounts — colour, name, **status** (active once seen in the
+traffic, expired once the JWT is, idle otherwise), host, and, from the JWT,
+subject, role and expiry — with the selected account's session headers shown
+below. Values are **masked** by default (they are live credentials); *Reveal
+values* shows them. Rename, recolour and delete from the toolbar.
+
+Recognition is session-aware: an account matched on its current session always
+wins, a value the server rotated it away from still attributes older traffic
+(so the history before a rotation is not orphaned), and when two accounts could
+match the same value the one on the request's site is preferred.
 
 ## Where accounts are kept
 

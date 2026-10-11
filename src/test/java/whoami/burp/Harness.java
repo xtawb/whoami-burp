@@ -56,6 +56,7 @@ public final class Harness {
         credentialTests();
         identityTests();
         storeTests();
+        smarterRecognitionTests();
         discoveryTests();
         hostileInput();
         extensionAgainstMockedBurp();
@@ -256,6 +257,54 @@ public final class Harness {
 
     private static Map<String, String> sessionMap(String sidValue) {
         return session(sidValue);
+    }
+
+    // ── smarter recognition: state, session lineage, host-aware matching ──────
+
+    private static void smarterRecognitionTests() {
+        check(Credentials.registrable("app.acme.io").equals("acme.io")
+                && Credentials.registrable("acme.io").equals("acme.io")
+                && Credentials.registrable("localhost").equals("localhost")
+                && Credentials.registrable("a.b.c.co").equals("c.co"), "the registrable site of a host is found");
+
+        // account state
+        long t = 1000;
+        Identity idle = new Identity("s1", "A", "CYAN", "", "acme.io", t, t, sessionHeaders("sid=IDLEAAAAAA"));
+        check(idle.state(5000).equals("idle"), "an account not seen since load is idle");
+        idle.noteSeen(6000_000L);
+        check(idle.state(5000).equals("active"), "an account matched since load is active");
+        LinkedHashMap<String, String> jwtHeaders = new LinkedHashMap<>();
+        jwtHeaders.put("Authorization", "Bearer " + jwt("{\"sub\":\"x\",\"exp\":100}"));
+        Identity expired = new Identity("s2", "B", "CYAN", "", "acme.io", t, t, jwtHeaders);
+        expired.noteSeen(9_000_000L);
+        check(expired.state(System.currentTimeMillis() / 1000).equals("expired"), "an expired token shows as expired, seen or not");
+
+        // session lineage: a value rotated away from still attributes old traffic, but a current value wins
+        Store store = new Store();
+        Identity acc = store.create("User", "CYAN", "acme.io", sessionHeaders("sid=OLDVALUE11"), t);
+        store.add(acc);
+        acc.updateCookies(Map.of("sid", "NEWVALUE22"), t + 1);
+        check(acc.pastValues().contains("OLDVALUE11"), "a rotated value is remembered");
+        check(store.match(sessionMap("NEWVALUE22")) == acc, "the current value matches");
+        check(store.match(sessionMap("OLDVALUE11")) == acc, "a request still carrying the old value is attributed to the account");
+        Identity fresh = store.create("Newcomer", "GREEN", "acme.io", sessionHeaders("OLDVALUE11"), t + 5);
+        store.add(fresh);
+        check(store.match(sessionMap("OLDVALUE11")) == fresh, "but an account currently using that value wins over the lineage");
+
+        // host breaks a tie: the same value on two sites goes to the account from the request's site
+        Store two = new Store();
+        Identity here = two.create("Here", "CYAN", "app.acme.io", sessionHeaders("sid=SHARED123456"), t);
+        Identity there = two.create("There", "GREEN", "app.other.io", sessionHeaders("sid=SHARED123456"), t);
+        two.add(here);
+        two.add(there);
+        check(two.match(sessionMap("SHARED123456"), "www.acme.io") == here, "a tie goes to the account on the request's site (acme)");
+        check(two.match(sessionMap("SHARED123456"), "api.other.io") == there, "…and to the other on the other site");
+    }
+
+    private static LinkedHashMap<String, String> sessionHeaders(String cookie) {
+        LinkedHashMap<String, String> h = new LinkedHashMap<>();
+        h.put("Cookie", cookie.contains("=") ? cookie : "sid=" + cookie);
+        return h;
     }
 
     // ── discovery ────────────────────────────────────────────────────────────

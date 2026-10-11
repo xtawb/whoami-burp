@@ -49,7 +49,7 @@ import javax.swing.JOptionPane;
 public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler,
         ContextMenuItemsProvider, WhoAmITab.Actions, Store.Listener {
 
-    static final String VERSION = "0.2.1";
+    static final String VERSION = "0.3.0";
     private static final String ACCOUNTS_KEY = "whoami.accounts.v1";
     private static final String REMEMBER_KEY = "whoami.rememberInProject";
 
@@ -100,7 +100,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
         try {
             Identity identity;
             synchronized (store) {
-                identity = store.match(sessionHeadersOf(request));
+                identity = store.match(sessionHeadersOf(request), hostOf(request.url()));
                 if (identity != null && identity.refreshTokens(sessionHeadersOf(request), now())) {
                     store.changed();        // a rotated bearer token, confirmed by its subject
                 }
@@ -139,7 +139,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
                 if (!fresh.isEmpty()) {
                     synchronized (store) {
                         LinkedHashMap<String, String> session = sessionHeadersOf(request);
-                        Identity identity = store.match(session);
+                        Identity identity = store.match(session, hostOf(request.url()));
                         // adopt a rotated cookie only when something stable confirms it is still this
                         // account — never when a different account has just logged in on the same cookie
                         if (identity != null && identity.isRotationAnchored(fresh, Credentials.identifyingValues(session))
@@ -183,7 +183,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
             JMenuItem save = new JMenuItem("WhoAmI: Save as new account");
             save.addActionListener(e -> saveAccount(request, session));
             items.add(save);
-            Identity match = store.match(session);
+            Identity match = store.match(session, hostOf(request.url()));
             if (match != null) {
                 JMenuItem update = new JMenuItem("WhoAmI: Update \"" + match.name() + "\" from this request");
                 update.addActionListener(e -> updateAccount(match.id(), session));
@@ -359,7 +359,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
                     perHost.merge(identity.host(), 1, Integer::sum);
                 }
                 for (Discovery.Candidate candidate : candidates) {
-                    if (store.match(candidate.headers) != null) {
+                    if (store.match(candidate.headers, candidate.host) != null) {
                         known++;                            // already saved: nothing to offer
                         continue;
                     }

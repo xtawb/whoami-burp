@@ -1,7 +1,9 @@
 package whoami.burp;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -160,5 +162,31 @@ final class Credentials {
 
     static String lower(String s) {
         return s == null ? "" : s.toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * The registrable part of a host: roughly its site. "app.acme.io" and "api.acme.io" share
+     * "acme.io". An approximation — the last two labels — enough to break a match tie by site,
+     * not a public-suffix lookup; it is never the sole reason two requests are judged the same.
+     */
+    static String registrable(String host) {
+        if (host == null || host.isEmpty()) {
+            return "";
+        }
+        host = lower(host.split(":", 2)[0]);
+        List<String> labels = split(host, ".");
+        int n = labels.size();
+        return n <= 2 ? host : labels.get(n - 2) + "." + labels.get(n - 1);
+    }
+
+    private static List<String> split(String s, String by) {
+        List<String> out = new ArrayList<>();
+        int from = 0;
+        for (int at = s.indexOf(by); at >= 0; at = s.indexOf(by, from)) {
+            out.add(s.substring(from, at));
+            from = at + by.length();
+        }
+        out.add(s.substring(from));
+        return out;
     }
 }

@@ -3,7 +3,9 @@ package whoami.burp;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -27,8 +29,11 @@ final class Identity {
     private final long createdAt;
     private long updatedAt;
     private final LinkedHashMap<String, String> headers;
+    private final LinkedHashSet<String> pastValues = new LinkedHashSet<>();     // session values rotated away, for attributing older traffic
     private final java.util.concurrent.atomic.AtomicInteger seen = new java.util.concurrent.atomic.AtomicInteger();
     private volatile long lastSeen;         // both transient: activity since the extension loaded
+
+    private static final int MAX_PAST_VALUES = 32;
 
     Identity(String id, String name, String colour, String note, String host,
              long createdAt, long updatedAt, LinkedHashMap<String, String> headers) {
@@ -118,8 +123,33 @@ final class Identity {
         return Credentials.identifyingValues(headers);
     }
 
+    /** Values this account used before a rotation: a request still carrying one is likely still this account. */
+    Set<String> pastValues() {
+        return new LinkedHashSet<>(pastValues);
+    }
+
+    private void rememberPast(String value) {
+        if (value == null || value.length() < Credentials.MIN_VALUE_LEN || identifyingValues().contains(value)) {
+            return;
+        }
+        pastValues.remove(value);                   // keep most-recent order
+        pastValues.add(value);
+        for (Iterator<String> oldest = pastValues.iterator(); pastValues.size() > MAX_PAST_VALUES; oldest.remove()) {
+            oldest.next();
+        }
+    }
+
     Jwt jwt() {
         return Credentials.jwtIn(headers);
+    }
+
+    /** "expired" when the JWT has passed its expiry; "active" when matched since load; else "idle". */
+    String state(long nowSeconds) {
+        Jwt jwt = jwt();
+        if (jwt != null && jwt.isExpired(nowSeconds)) {
+            return "expired";
+        }
+        return seen.get() > 0 ? "active" : "idle";
     }
 
     /**
@@ -133,21 +163,23 @@ final class Identity {
             return false;
         }
         LinkedHashMap<String, String> cookies = Credentials.cookies(current);
-        boolean changed = false;
+        List<String> rotatedAway = new ArrayList<>();
         for (Map.Entry<String, String> set : fresh.entrySet()) {
             // only a cookie this account already carries, and only a real new value: a cleared
             // cookie (a logout's Set-Cookie) is not a refresh and must not blank what we hold
             if (cookies.containsKey(set.getKey()) && !set.getValue().isEmpty()
                     && !set.getValue().equals(cookies.get(set.getKey()))) {
+                rotatedAway.add(cookies.get(set.getKey()));
                 cookies.put(set.getKey(), set.getValue());
-                changed = true;
             }
         }
-        if (changed) {
-            setHeader("Cookie", rebuildCookie(cookies));
-            updatedAt = now;
+        if (rotatedAway.isEmpty()) {
+            return false;
         }
-        return changed;
+        setHeader("Cookie", rebuildCookie(cookies));
+        rotatedAway.forEach(this::rememberPast);                // remembered after the header is the new one
+        updatedAt = now;
+        return true;
     }
 
     /**
@@ -168,7 +200,9 @@ final class Identity {
             Jwt fresh = Jwt.fromHeaderValue(header.getValue());
             Jwt was = Jwt.fromHeaderValue(old);
             if (fresh != null && was != null && !fresh.subject().isEmpty() && fresh.subject().equals(was.subject())) {
+                String rotatedAway = Credentials.bareToken(old);
                 setHeader(header.getKey(), header.getValue());
+                rememberPast(rotatedAway);                      // remembered after the header is the new one
                 changed = true;
             }
         }
@@ -257,8 +291,12 @@ final class Identity {
         for (Map.Entry<String, String> header : headers.entrySet()) {
             blob.append(blob.length() > 0 ? "\n" : "").append(enc(header.getKey())).append(' ').append(enc(header.getValue()));
         }
+        StringBuilder past = new StringBuilder();
+        for (String value : pastValues) {
+            past.append(past.length() > 0 ? "\n" : "").append(enc(value));
+        }
         return String.join("\t", id, enc(name), colour, enc(note), enc(host),
-                Long.toString(createdAt), Long.toString(updatedAt), enc(blob.toString()));
+                Long.toString(createdAt), Long.toString(updatedAt), enc(blob.toString()), enc(past.toString()));
     }
 
     static Identity parse(String line) {
@@ -277,8 +315,17 @@ final class Identity {
             }
         }
         try {
-            return new Identity(f[0], dec(f[1]), f[2], dec(f[3]), dec(f[4]),
+            Identity identity = new Identity(f[0], dec(f[1]), f[2], dec(f[3]), dec(f[4]),
                     Long.parseLong(f[5]), Long.parseLong(f[6]), headers);
+            if (f.length >= 9) {                        // field added in 0.3.0; older saves have none
+                String past = dec(f[8]);
+                if (!past.isEmpty()) {
+                    for (String value : past.split("\n")) {
+                        identity.pastValues.add(dec(value));
+                    }
+                }
+            }
+            return identity;
         } catch (NumberFormatException e) {
             return null;
         }
