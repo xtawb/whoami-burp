@@ -1,0 +1,28 @@
+<p>WhoAmI keeps the sessions of the accounts you test under a name and a colour, so you can tell at a glance which
+request belongs to which account, and replay a request as any of them.</p>
+
+<p>Features</p>
+<ul>
+	<li>Save an account from any request: its Cookie, Authorization, CSRF and API-key headers are captured under a name
+		and a colour.</li>
+	<li>Every request in the proxy that carries a saved account's session is highlighted in that account's colour and
+		commented with its name.</li>
+	<li>Sessions stay current: a cookie the server rotates (Set-Cookie) is followed, and a bearer token re-issued for the
+		same JWT subject is adopted, without re-saving the account.</li>
+	<li>Send a request to Repeater as any saved account — its session swapped in, in a named tab — or as no session at
+		all, to see the unauthenticated behaviour.</li>
+	<li>For a JWT, the tab shows its subject, role / scope and expiry, and marks it when it has expired. The token is
+		read, never verified.</li>
+	<li>Session values are masked in the tab by default, since they are live credentials; a toggle reveals them.</li>
+</ul>
+
+<p>Usage</p>
+<ol>
+	<li>Right-click a request and choose "WhoAmI: Save as new account"; give it a name.</li>
+	<li>Browse: requests carrying that account's session are coloured and labelled in the proxy history.</li>
+	<li>Right-click any request and choose "WhoAmI: Send as" to open it in Repeater as another account.</li>
+</ol>
+
+<p>Saved accounts are kept in the Burp project file, where this traffic already is, or only in memory if you prefer.
+They are never written to Burp's global settings, never sent anywhere, and no saved credential is checked against any
+service. The extension has no dependencies and makes no network requests of its own.</p>
