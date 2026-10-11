@@ -49,7 +49,7 @@ import javax.swing.JOptionPane;
 public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler,
         ContextMenuItemsProvider, WhoAmITab.Actions, Store.Listener {
 
-    static final String VERSION = "0.3.0";
+    static final String VERSION = "0.4.0";
     private static final String ACCOUNTS_KEY = "whoami.accounts.v1";
     private static final String REMEMBER_KEY = "whoami.rememberInProject";
 
@@ -254,12 +254,24 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
     }
 
     private String suggestedName(LinkedHashMap<String, String> session, HttpRequest request) {
-        Jwt jwt = Credentials.jwtIn(session);
-        if (jwt != null && !jwt.subject().isEmpty()) {
-            return jwt.subject();
+        String fromSession = Credentials.accountName(session);          // JWT subject, else a Basic-auth username
+        if (!fromSession.isEmpty()) {
+            return fromSession;
+        }
+        String fromBody = usernameFromRequest(request);                 // a login form's username field
+        if (!fromBody.isEmpty()) {
+            return fromBody;
         }
         String host = hostOf(request.url());
         return host.isEmpty() ? "account " + (store.size() + 1) : host;
+    }
+
+    private static String usernameFromRequest(HttpRequest request) {
+        try {
+            return Credentials.usernameFromBody(request.bodyToString(), request.headerValue("Content-Type"));
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     private void sendAs(HttpRequest request, Identity identity) {
@@ -363,13 +375,20 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
                         known++;                            // already saved: nothing to offer
                         continue;
                     }
-                    String name = candidate.subject.isEmpty()
-                            ? (candidate.host.isEmpty() ? "account" : candidate.host) + " #" + perHost.merge(candidate.host, 1, Integer::sum)
-                            : candidate.subject;
+                    String level = Credentials.privilegeTier(candidate.role);
+                    String identity = !candidate.subject.isEmpty() ? candidate.subject
+                            : Credentials.accountName(candidate.headers);       // a Basic-auth username, perhaps
+                    String name = !identity.isEmpty() ? identity
+                            : (candidate.host.isEmpty() ? "account" : candidate.host) + " #" + perHost.merge(candidate.host, 1, Integer::sum);
                     toShow.add(new WhoAmITab.Discovered(name, candidate.host, candidate.requests,
-                            candidate.subject, candidate.samplePath, candidate.headers));
+                            candidate.subject, level, candidate.samplePath, candidate.headers));
                 }
             }
+            // the most privileged sessions first, then the busiest — the admin session stands out
+            toShow.sort((a, b) -> {
+                int byLevel = Integer.compare(Credentials.privilegeRank(b.level), Credentials.privilegeRank(a.level));
+                return byLevel != 0 ? byLevel : Integer.compare(b.requests, a.requests);
+            });
             tab.setDiscovered(toShow);
             api.logging().logToOutput("WhoAmI: scanned " + total + " request(s); " + toShow.size()
                     + " new account(s), " + known + " already saved.");

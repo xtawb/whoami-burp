@@ -68,15 +68,17 @@ final class WhoAmITab extends JPanel {
         final String host;
         final int requests;
         final String subject;
+        final String level;                 // inferred privilege tier, or ""
         final String samplePath;
         final LinkedHashMap<String, String> headers;
 
-        Discovered(String suggestedName, String host, int requests, String subject, String samplePath,
+        Discovered(String suggestedName, String host, int requests, String subject, String level, String samplePath,
                    LinkedHashMap<String, String> headers) {
             this.suggestedName = suggestedName;
             this.host = host;
             this.requests = requests;
             this.subject = subject;
+            this.level = level;
             this.samplePath = samplePath;
             this.headers = headers;
         }
@@ -85,7 +87,7 @@ final class WhoAmITab extends JPanel {
     static final int COL_COLOUR = 0, COL_NAME = 1, COL_STATE = 2, COL_HOST = 3, COL_SUBJECT = 4, COL_ROLE = 5,
             COL_EXPIRES = 6, COL_SEEN = 7, COL_HEADERS = 8;
     private static final String[] ACCOUNT_COLUMNS = {"", "Name", "Status", "Host", "Subject (JWT)", "Role", "Token expires", "Seen", "Session headers"};
-    private static final String[] DISCOVERED_COLUMNS = {"Suggested name", "Host", "Requests", "Subject (JWT)", "Sample path"};
+    private static final String[] DISCOVERED_COLUMNS = {"Suggested name", "Level", "Host", "Requests", "Subject (JWT)", "Sample path"};
     private static final DateTimeFormatter WHEN = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
     final JCheckBox rememberInProject = new JCheckBox("Remember accounts in this project file", true);
@@ -188,7 +190,7 @@ final class WhoAmITab extends JPanel {
         discoveredTable.setAutoCreateRowSorter(true);
         discoveredTable.setRowHeight(Math.max(discoveredTable.getRowHeight(), 22));
         discoveredTable.setShowGrid(false);
-        int[] widths = {200, 190, 70, 220, 260};
+        int[] widths = {190, 70, 180, 70, 200, 240};
         for (int i = 0; i < widths.length && i < discoveredTable.getColumnModel().getColumnCount(); i++) {
             discoveredTable.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         }
@@ -614,10 +616,11 @@ final class WhoAmITab extends JPanel {
             Discovered d = discovered.get(r);
             switch (c) {
                 case 0: return d.suggestedName;
-                case 1: return d.host;
-                case 2: return Integer.toString(d.requests);
-                case 3: return d.subject;
-                case 4: return d.samplePath;
+                case 1: return d.level;
+                case 2: return d.host;
+                case 3: return Integer.toString(d.requests);
+                case 4: return d.subject;
+                case 5: return d.samplePath;
                 default: return "";
             }
         }

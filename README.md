@@ -12,13 +12,17 @@ One jar, no dependencies, Burp Suite Community and Professional.
 
 - **Save an account.** Right-click any request → **WhoAmI: Save as new
   account**. Its Cookie, Authorization, CSRF and API-key headers are captured
-  under a name you give and a colour picked for you.
+  under a name suggested for you (a JWT subject, a Basic-auth user, or a
+  username from the login body) and a colour picked for you.
 - **Find the accounts already in your history.** *Scan HTTP history* groups the
   proxy history by session and lists each account it finds — **one per
   session, so a site you browsed as two users comes back as two accounts**,
-  told apart by the cookie or token that differs. Select the ones you want and
-  *Save*. A cookie the server rotated mid-session does not split an account in
-  two (requests are also linked by JWT subject).
+  told apart by the cookie or token that differs. Each is named for you (JWT
+  subject, a Basic-auth user, or the host) and given a privilege **level**
+  inferred from its role/scope (admin, elevated, user, guest), the most
+  privileged listed first. Select the ones you want and *Save*. A cookie the
+  server rotated mid-session does not split an account in two (requests are
+  also linked by JWT subject).
 - **See who is who.** Every request in the proxy that carries a saved
   account's session is highlighted in that account's colour and commented with
   its name — so a glance down the history tells you which account made what.

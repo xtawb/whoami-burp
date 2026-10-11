@@ -58,6 +58,7 @@ public final class Harness {
         storeTests();
         smarterRecognitionTests();
         discoveryTests();
+        namingAndClassificationTests();
         hostileInput();
         extensionAgainstMockedBurp();
         System.out.println("harness: " + checks + " checks passed");
@@ -330,6 +331,39 @@ public final class Harness {
                 "the richest session is the candidate's, ready to save");
         check(found.get(1).requests == 1 && found.get(1).subject.isEmpty(), "the second account is separate");
         check(Discovery.cluster(List.of(req("x", "/", "Accept", "*/*"))).isEmpty(), "no session means no candidate");
+    }
+
+    // ── smarter naming and privilege classification ──────────────────────────
+
+    private static void namingAndClassificationTests() {
+        // Basic auth username (base64 of "alice:secret" built at runtime, no literal credential)
+        String basic = "Basic " + Base64.getEncoder().encodeToString("alice:s3cret!".getBytes(StandardCharsets.UTF_8));
+        check(Credentials.basicUsername(basic).equals("alice"), "a Basic-auth username is read: " + Credentials.basicUsername(basic));
+        check(Credentials.basicUsername("Bearer x").isEmpty() && Credentials.basicUsername("Basic !!notbase64")
+                .isEmpty(), "a non-Basic or malformed header yields no username");
+
+        check(Credentials.usernameFromBody("username=bob&password=p", "application/x-www-form-urlencoded").equals("bob"),
+                "a form login body gives the username");
+        check(Credentials.usernameFromBody("{\"email\":\"carol@x.io\",\"pass\":\"p\"}", "application/json").equals("carol@x.io"),
+                "a JSON login body gives the username");
+        check(Credentials.usernameFromBody("{\"token\":\"abc\"}", "application/json").isEmpty(), "a body with no username gives none");
+
+        LinkedHashMap<String, String> basicSession = new LinkedHashMap<>();
+        basicSession.put("Authorization", basic);
+        check(Credentials.accountName(basicSession).equals("alice"), "an account with Basic auth is named by its user");
+        LinkedHashMap<String, String> jwtSession = new LinkedHashMap<>();
+        jwtSession.put("Authorization", "Bearer " + jwt("{\"sub\":\"dave@x.io\"}"));
+        check(Credentials.accountName(jwtSession).equals("dave@x.io"), "a JWT account is named by its subject");
+
+        check(Credentials.privilegeTier("administrator").equals("admin")
+                && Credentials.privilegeTier("ROLE_ADMIN").equals("admin")
+                && Credentials.privilegeTier("support agent").equals("elevated")
+                && Credentials.privilegeTier("member").equals("user")
+                && Credentials.privilegeTier("anonymous").equals("guest")
+                && Credentials.privilegeTier("wizard").isEmpty(), "a role is placed in a privilege tier");
+        check(Credentials.privilegeRank("admin") > Credentials.privilegeRank("user")
+                && Credentials.privilegeRank("user") > Credentials.privilegeRank("guest")
+                && Credentials.privilegeRank("") < 0, "tiers are ranked, unknown lowest");
     }
 
     // ── the extension against a mocked Burp ───────────────────────────────────

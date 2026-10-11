@@ -42,15 +42,17 @@ final class Discovery {
         final int requests;
         final String samplePath;
         final String subject;               // JWT subject, or ""
+        final String role;                  // JWT role/scope, or ""
         final LinkedHashMap<String, String> headers;    // the richest session seen, ready to save
 
-        Candidate(String host, List<String> hosts, int requests, String samplePath, String subject,
+        Candidate(String host, List<String> hosts, int requests, String samplePath, String subject, String role,
                   LinkedHashMap<String, String> headers) {
             this.host = host;
             this.hosts = hosts;
             this.requests = requests;
             this.samplePath = samplePath;
             this.subject = subject;
+            this.role = role;
             this.headers = headers;
         }
     }
@@ -108,7 +110,8 @@ final class Discovery {
             Request representative = requests.get(rep);
             Jwt jwt = Credentials.jwtIn(representative.session);
             out.add(new Candidate(mostCommon(hostCount), new ArrayList<>(hostCount.keySet()), indices.size(),
-                    representative.path, jwt == null ? "" : jwt.subject(), representative.session));
+                    representative.path, jwt == null ? "" : jwt.subject(), jwt == null ? "" : jwt.role(),
+                    representative.session));
         }
         out.sort((a, b) -> Integer.compare(b.requests, a.requests));
         return out;

@@ -164,6 +164,139 @@ final class Credentials {
         return s == null ? "" : s.toLowerCase(Locale.ROOT);
     }
 
+    // ── naming and classification ──────────────────────────────────────────────
+
+    private static final java.util.regex.Pattern BASIC = java.util.regex.Pattern.compile("^Basic\\s+(\\S+)", Pattern.CASE_INSENSITIVE);
+    private static final String[] USERNAME_FIELDS = {"username", "user", "userName", "user_name", "email", "login",
+            "j_username", "identifier", "account", "loginId"};
+    private static final String[] TIERS = {
+            "admin|root|superuser|super-user|owner|administrator|sysadmin",
+            "staff|manager|moderator|operator|editor|support|developer|maintainer",
+            "user|member|customer|subscriber|basic|standard|registered|authenticated",
+            "guest|anonymous|anon|visitor|public|readonly|read-only"};
+    private static final String[] TIER_NAMES = {"admin", "elevated", "user", "guest"};
+
+    /** The username in a Basic Authorization header ("Basic dXNlcjpwYXNz" → "user"), or "". */
+    static String basicUsername(String authValue) {
+        if (authValue == null) {
+            return "";
+        }
+        java.util.regex.Matcher m = BASIC.matcher(authValue.trim());
+        if (!m.find()) {
+            return "";
+        }
+        try {
+            String decoded = new String(java.util.Base64.getDecoder().decode(m.group(1)), java.nio.charset.StandardCharsets.UTF_8);
+            int colon = decoded.indexOf(':');
+            String user = colon >= 0 ? decoded.substring(0, colon) : decoded;
+            return printable(user) ? user.trim() : "";
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
+    }
+
+    /** A username-like field from a login request body (form or JSON), or "". */
+    static String usernameFromBody(String body, String contentType) {
+        if (body == null || body.isEmpty() || body.length() > 1_000_000) {
+            return "";
+        }
+        String type = lower(contentType);
+        if (type.contains("json") || body.trim().startsWith("{")) {
+            try {
+                Map<String, Object> doc = Json.object(Json.parse(body));
+                if (doc != null) {
+                    for (String field : USERNAME_FIELDS) {
+                        for (Map.Entry<String, Object> e : doc.entrySet()) {
+                            if (e.getKey().equalsIgnoreCase(field) && e.getValue() instanceof String) {
+                                String value = ((String) e.getValue()).trim();
+                                if (!value.isEmpty() && value.length() <= 100 && printable(value)) {
+                                    return value;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (Json.Malformed ignored) {
+                // not JSON after all: fall through to form parsing
+            }
+        }
+        Map<String, String> form = new LinkedHashMap<>();
+        for (String pair : body.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq > 0) {
+                form.put(urlDecode(pair.substring(0, eq)).trim(), urlDecode(pair.substring(eq + 1)).trim());
+            }
+        }
+        for (String field : USERNAME_FIELDS) {
+            for (Map.Entry<String, String> e : form.entrySet()) {
+                if (e.getKey().equalsIgnoreCase(field) && !e.getValue().isEmpty() && e.getValue().length() <= 100
+                        && printable(e.getValue())) {
+                    return e.getValue();
+                }
+            }
+        }
+        return "";
+    }
+
+    /** The best display name from the session alone: the JWT subject, else a Basic-auth username. "" if neither. */
+    static String accountName(Map<String, String> sessionHeaders) {
+        Jwt jwt = jwtIn(sessionHeaders);
+        if (jwt != null && !jwt.subject().isEmpty()) {
+            return jwt.subject();
+        }
+        for (Map.Entry<String, String> header : sessionHeaders.entrySet()) {
+            if (!header.getKey().equalsIgnoreCase("cookie")) {
+                String user = basicUsername(header.getValue());
+                if (!user.isEmpty()) {
+                    return user;
+                }
+            }
+        }
+        return "";
+    }
+
+    /** A privilege tier from a role/scope string: "admin", "elevated", "user", "guest", or "". */
+    static String privilegeTier(String role) {
+        String text = lower(role);
+        if (text.isEmpty()) {
+            return "";
+        }
+        for (int i = 0; i < TIERS.length; i++) {
+            if (Pattern.compile("(?:^|[^a-z])(?:" + TIERS[i] + ")(?:[^a-z]|$)").matcher(text).find()) {
+                return TIER_NAMES[i];
+            }
+        }
+        return "";
+    }
+
+    /** Higher is more privileged; -1 when unknown. For ordering discovered sessions. */
+    static int privilegeRank(String tier) {
+        switch (tier) {
+            case "admin": return 3;
+            case "elevated": return 2;
+            case "user": return 1;
+            case "guest": return 0;
+            default: return -1;
+        }
+    }
+
+    private static boolean printable(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (Character.isISOControl(s.charAt(i))) {
+                return false;
+            }
+        }
+        return !s.isEmpty();
+    }
+
+    private static String urlDecode(String s) {
+        try {
+            return java.net.URLDecoder.decode(s, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            return s;
+        }
+    }
+
     /**
      * The registrable part of a host: roughly its site. "app.acme.io" and "api.acme.io" share
      * "acme.io". An approximation — the last two labels — enough to break a match tie by site,
