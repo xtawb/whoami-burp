@@ -9,6 +9,7 @@ import burp.api.montoya.http.message.Cookie;
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
+import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.persistence.PersistedObject;
 import burp.api.montoya.persistence.Preferences;
 import burp.api.montoya.proxy.ProxyHttpRequestResponse;
@@ -50,7 +51,7 @@ import javax.swing.JOptionPane;
 public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler,
         ContextMenuItemsProvider, WhoAmITab.Actions, Store.Listener {
 
-    static final String VERSION = "0.5.0";
+    static final String VERSION = "0.6.0";
     private static final String ACCOUNTS_KEY = "whoami.accounts.v1";
     private static final String REMEMBER_KEY = "whoami.rememberInProject";
 
@@ -265,8 +266,63 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
                 });
                 items.add(every);
             }
+            // sends real requests: offered, confirmed, and run only on this click
+            JMenuItem compare = new JMenuItem("WhoAmI: Compare access across accounts (" + store.size() + ")");
+            compare.addActionListener(e -> compareAccess(request));
+            items.add(compare);
         }
         return items;
+    }
+
+    /** Send the request as each account and as no session, then show what each got back. Explicit, confirmed. */
+    private void compareAccess(HttpRequest request) {
+        int accounts = store.size();
+        String host = hostOf(request.url());
+        int ok = JOptionPane.showConfirmDialog(tab,
+                "Send this request " + (accounts + 1) + " times to " + (host.isEmpty() ? "its host" : host)
+                        + " — once as each of " + accounts + " account(s), and once with no session — to compare access?\n"
+                        + "This sends real requests.",
+                "WhoAmI: compare access", JOptionPane.OK_CANCEL_OPTION);
+        if (ok != JOptionPane.OK_OPTION) {
+            return;
+        }
+        background("whoami-compare", () -> runAccessCheck(request));
+    }
+
+    /** Send the request as no session and as each account, show the results, and return them. No dialog. */
+    List<AccessCheck.Row> runAccessCheck(HttpRequest request) {
+        List<AccessCheck.Row> rows = new ArrayList<>();
+        rows.add(probe("(no session)", false, stripSession(request)));
+        for (Identity identity : store.all()) {
+            rows.add(probe(identity.name(), true, applyAccount(request, identity)));
+        }
+        String summary = AccessCheck.summary(rows);
+        tab.setAccessCheck(request.method() + " " + request.url(), rows, summary);
+        api.logging().logToOutput("WhoAmI: access check — " + summary);
+        return rows;
+    }
+
+    private AccessCheck.Row probe(String label, boolean session, HttpRequest request) {
+        try {
+            HttpResponse response = api.http().sendRequest(request).response();
+            int status = response == null ? 0 : response.statusCode();
+            int length = response == null ? -1 : response.body().length();
+            return new AccessCheck.Row(label, session, status, length);
+        } catch (RuntimeException e) {
+            return new AccessCheck.Row(label, session, 0, -1);
+        }
+    }
+
+    private void background(String name, Runnable body) {
+        Thread t = new Thread(() -> {
+            try {
+                body.run();
+            } catch (RuntimeException e) {
+                api.logging().logToError("WhoAmI (" + name + "): " + e);
+            }
+        }, name);
+        t.setDaemon(true);
+        t.start();
     }
 
     private HttpRequest requestFrom(ContextMenuEvent event) {

@@ -62,6 +62,7 @@ public final class Harness {
         hostileInput();
         extensionAgainstMockedBurp();
         sessionHandlingTests();
+        accessCheckTests();
         System.out.println("harness: " + checks + " checks passed");
         System.exit(0);
     }
@@ -530,6 +531,56 @@ public final class Harness {
         check(burp.sessionActions.isEmpty() && !burp.deregistered.isEmpty(), "deleting an account deregisters its action");
 
         System.out.println("session-handling actions: ok");
+    }
+
+    // ── Phase 4: authorization check (compare access across accounts) ─────────
+
+    private static AccessCheck.Row row(String label, boolean session, int status, int length) {
+        return new AccessCheck.Row(label, session, status, length);
+    }
+
+    private static void accessCheckTests() throws Exception {
+        check(AccessCheck.access(200).equals("allowed") && AccessCheck.access(204).equals("allowed")
+                && AccessCheck.access(403).equals("denied") && AccessCheck.access(401).equals("denied")
+                && AccessCheck.access(302).equals("redirect") && AccessCheck.access(500).equals("server error")
+                && AccessCheck.access(0).equals("no response") && AccessCheck.access(418).equals("other (418)"),
+                "a status code reads as a kind of access");
+
+        check(AccessCheck.summary(List.of(row("(no session)", false, 401, 10), row("Admin", true, 200, 500),
+                row("User", true, 403, 12))).startsWith("Each account"), "distinct access is not flagged");
+        check(AccessCheck.summary(List.of(row("(no session)", false, 401, 10), row("Admin", true, 200, 500),
+                row("User", true, 200, 498))).contains("near-identical"), "two accounts with the same page are flagged");
+        check(AccessCheck.summary(List.of(row("(no session)", false, 200, 500), row("Admin", true, 200, 500)))
+                .contains("no session"), "a response with no session is flagged");
+
+        // end to end: the extension sends as each account and as no session, and reads the results
+        MockBurp burp = new MockBurp();
+        WhoAmIExtension ext = new WhoAmIExtension();
+        ext.initialize(burp.api());
+        ext.store.add(ext.store.create("Admin", "RED", "acme.io", sessionHeaders("sid=ADMINKEY1234"), 1));
+        ext.store.add(ext.store.create("User", "CYAN", "acme.io", sessionHeaders("sid=USERKEY5678"), 2));
+        burp.responder = request -> {
+            String cookie = request.headerValue("Cookie");
+            if (cookie == null) {
+                return MockBurp.response(401, "login required");                 // no session
+            }
+            if (cookie.contains("ADMINKEY1234")) {
+                return MockBurp.response(200, "A".repeat(600));
+            }
+            if (cookie.contains("USERKEY5678")) {
+                return MockBurp.response(200, "A".repeat(598));                   // near-identical to admin → flag
+            }
+            return MockBurp.response(403, "forbidden");
+        };
+        HttpRequest target = MockBurp.request("https://acme.io/api/admin/users", "GET", hdrs("Cookie", "sid=ADMINKEY1234"));
+        List<AccessCheck.Row> result = ext.runAccessCheck(target);
+        check(result.size() == 3, "one result per account, plus no session: " + result.size());
+        check(result.get(0).label.equals("(no session)") && result.get(0).status == 401, "no session is denied");
+        check(result.stream().anyMatch(r -> r.label.equals("Admin") && r.status == 200 && r.length == 600), "the admin is allowed");
+        check(result.stream().anyMatch(r -> r.label.equals("User") && r.status == 200), "the user is allowed too");
+        check(AccessCheck.summary(result).contains("near-identical"), "and the identical responses are flagged for review");
+
+        System.out.println("access check: ok");
     }
 
     private static void waitUntil(java.util.function.BooleanSupplier cond, String what) throws Exception {

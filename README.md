@@ -38,6 +38,14 @@ One jar, no dependencies, Burp Suite Community and Professional.
   does this do unauthenticated" — and *Send as every account* opens one
   Repeater tab per account, the same request as each, for an authorization
   check in one click.
+- **Compare access across accounts.** Right-click a request →
+  *WhoAmI: Compare access across accounts*. After you confirm, it sends that
+  one request as each account and once with no session (through Burp), and
+  shows what each got back — status, length, allowed/denied — flagging an
+  endpoint that answered two accounts with near-identical responses, or
+  answered with no session at all: the two shapes of broken access control.
+  It points where to look; it does not declare a finding. This is the only
+  feature that sends requests, and only on that click.
 - **Use an account in Repeater, Intruder and Scanner.** Each account is
   registered as a Burp **session-handling action**. Add a rule in *Project
   options → Sessions* whose action is *Invoke a Burp extension → WhoAmI:
@@ -67,8 +75,14 @@ In the **Burp project file**, where this traffic already lives — so your
 accounts are there when you reopen the project, and nowhere else. Turn
 *Remember accounts in this project file* off and they live only until the
 extension is unloaded. They are **never** written to Burp's global settings,
-never sent anywhere, and no saved credential is ever checked against any
-service.
+never sent to any third party, and no saved credential is ever checked against
+any service.
+
+The extension sends a request only for *Compare access across accounts*, and
+only on that click, after you confirm: it replays the one request you chose to
+its own target, as each account, through Burp. Everything else is passive —
+it reads the proxy stream and history, annotates requests, and hands requests
+to Repeater; the sending there is Burp's, when you run those tools.
 
 ## Build
 
@@ -85,6 +99,7 @@ JDK 17 or newer.
 |---|---|
 | `WhoAmIExtension` | the Montoya glue: proxy handlers, the context menu, session-handling actions, persistence |
 | `AccountSessionAction` | one account as a Burp session-handling action |
+| `AccessCheck` | reading an authorization comparison: status → access, and what the rows together suggest |
 | `WhoAmITab` | the Swing tab |
 | `Store` | the saved accounts and the rule that matches a request to one |
 | `Discovery` | grouping the proxy history into one candidate account per session |

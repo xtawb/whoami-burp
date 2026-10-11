@@ -2,6 +2,7 @@ package whoami.burp;
 
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.core.Annotations;
+import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.core.HighlightColor;
 import burp.api.montoya.http.message.Cookie;
 import burp.api.montoya.http.message.HttpHeader;
@@ -42,6 +43,7 @@ final class MockBurp {
     final List<HttpRequest> history = Collections.synchronizedList(new ArrayList<>());
     final List<burp.api.montoya.http.sessions.SessionHandlingAction> sessionActions = Collections.synchronizedList(new ArrayList<>());
     final List<String> deregistered = Collections.synchronizedList(new ArrayList<>());
+    volatile Function<HttpRequest, HttpResponse> responder = r -> response(200, "ok");     // what the "server" answers
     volatile Component suiteTab;
 
     MockBurp() {
@@ -166,6 +168,13 @@ final class MockBurp {
         return mock(Cookie.class, Map.of("name", a -> name, "value", a -> value));
     }
 
+    static HttpResponse response(int status, String body) {
+        byte[] bytes = body.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        ByteArray array = mock(ByteArray.class, Map.of("length", a -> bytes.length, "getBytes", a -> bytes));
+        return mock(HttpResponse.class, Map.of(
+                "statusCode", a -> (short) status, "body", a -> array, "bodyToString", a -> body));
+    }
+
     static InterceptedResponse interceptedResponse(HttpRequest initiating, List<Cookie> cookies) {
         return mock(InterceptedResponse.class, Map.of(
                 "initiatingRequest", a -> initiating,
@@ -235,6 +244,10 @@ final class MockBurp {
                     sessionActions.add(action);
                     return mock(burp.api.montoya.core.Registration.class, Map.of(
                             "deregister", x -> { deregistered.add(action.name()); sessionActions.remove(action); return null; }));
+                },
+                "sendRequest", a -> {
+                    HttpResponse resp = responder.apply((HttpRequest) a[0]);
+                    return mock(HttpRequestResponse.class, Map.of("request", x -> a[0], "response", x -> resp));
                 }));
         return mock(MontoyaApi.class, Map.of(
                 "persistence", a -> persistence, "userInterface", a -> ui, "extension", a -> extension,

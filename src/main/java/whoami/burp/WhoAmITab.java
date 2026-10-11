@@ -103,6 +103,11 @@ final class WhoAmITab extends JPanel {
     private final JLabel status = new JLabel(" ");
     private List<Identity> rows = new ArrayList<>();
     private List<Discovered> discovered = new ArrayList<>();
+    private List<AccessCheck.Row> access = new ArrayList<>();
+    private final AccessModel accessModel = new AccessModel();
+    private final JTable accessTable = new JTable(accessModel);
+    private final JLabel accessRequest = new JLabel("Right-click a request → \"WhoAmI: Compare access across accounts\".");
+    private final JLabel accessSummary = new JLabel(" ");
 
     WhoAmITab(Actions actions) {
         super(new BorderLayout(0, 4));
@@ -110,6 +115,7 @@ final class WhoAmITab extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(6, 6, 6, 6));
         tabs.addTab("Accounts", accountsPanel());
         tabs.addTab("Discovered", discoveredPanel());
+        tabs.addTab("Access check", accessPanel());
         add(tabs, BorderLayout.CENTER);
         add(status, BorderLayout.SOUTH);
         refreshTitles();
@@ -200,6 +206,26 @@ final class WhoAmITab extends JPanel {
         return panel;
     }
 
+    private JPanel accessPanel() {
+        accessTable.setAutoCreateRowSorter(true);
+        accessTable.setRowHeight(Math.max(accessTable.getRowHeight(), 22));
+        accessTable.setShowGrid(false);
+        accessTable.setDefaultRenderer(Object.class, new AccessRenderer());
+        int[] widths = {220, 80, 100, 140};
+        for (int i = 0; i < widths.length && i < accessTable.getColumnModel().getColumnCount(); i++) {
+            accessTable.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
+        }
+        JPanel head = new JPanel(new BorderLayout(0, 2));
+        head.setBorder(BorderFactory.createEmptyBorder(2, 4, 4, 4));
+        accessRequest.setFont(accessRequest.getFont().deriveFont(Font.BOLD));
+        head.add(accessRequest, BorderLayout.NORTH);
+        head.add(accessSummary, BorderLayout.SOUTH);
+        JPanel panel = new JPanel(new BorderLayout(0, 4));
+        panel.add(head, BorderLayout.NORTH);
+        panel.add(new JScrollPane(accessTable), BorderLayout.CENTER);
+        return panel;
+    }
+
     private static JButton button(String text, java.awt.event.ActionListener l) {
         JButton b = new JButton(text);
         b.addActionListener(l);
@@ -234,6 +260,17 @@ final class WhoAmITab extends JPanel {
             tabs.setSelectedIndex(1);
             setStatus(found.isEmpty() ? "No new accounts found in the history."
                     : found.size() + " account(s) found in the history — select and Save.");
+        });
+    }
+
+    void setAccessCheck(String requestLine, List<AccessCheck.Row> result, String summary) {
+        onEdt(() -> {
+            access = new ArrayList<>(result);
+            accessModel.fireTableDataChanged();
+            accessRequest.setText(requestLine);
+            accessSummary.setText(summary);
+            accessSummary.setForeground(summary.startsWith("⚠") ? new Color(0xC0392B) : new JLabel().getForeground());
+            tabs.setSelectedIndex(2);
         });
     }
 
@@ -623,6 +660,62 @@ final class WhoAmITab extends JPanel {
                 case 5: return d.samplePath;
                 default: return "";
             }
+        }
+    }
+
+    private static final String[] ACCESS_COLUMNS = {"Account", "Status", "Length", "Access"};
+
+    private final class AccessModel extends AbstractTableModel {
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public int getRowCount() {
+            return access.size();
+        }
+
+        @Override
+        public int getColumnCount() {
+            return ACCESS_COLUMNS.length;
+        }
+
+        @Override
+        public String getColumnName(int c) {
+            return ACCESS_COLUMNS[c];
+        }
+
+        @Override
+        public Object getValueAt(int r, int c) {
+            AccessCheck.Row row = access.get(r);
+            switch (c) {
+                case 0: return row.label;
+                case 1: return row.status == 0 ? "—" : Integer.toString(row.status);
+                case 2: return row.length < 0 ? "—" : Integer.toString(row.length);
+                case 3: return row.access();
+                default: return "";
+            }
+        }
+    }
+
+    /** "denied" reads as good (green), "allowed" as worth a look (amber), errors red. */
+    private final class AccessRenderer extends DefaultTableCellRenderer {
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean focus, int r, int c) {
+            Component comp = super.getTableCellRendererComponent(t, v, sel, focus, r, c);
+            if (!sel) {
+                comp.setBackground(zebra(t, r));
+                int modelRow = t.convertRowIndexToModel(r);
+                String kind = modelRow >= 0 && modelRow < access.size() ? access.get(modelRow).access() : "";
+                Color fg = t.getForeground();
+                if (t.convertColumnIndexToModel(c) == 3) {
+                    fg = kind.equals("denied") ? new Color(0x3C9A54)
+                            : kind.equals("allowed") ? new Color(0xB26A00)
+                            : kind.startsWith("server") || kind.equals("no response") ? new Color(0xE2544B) : t.getForeground();
+                }
+                comp.setForeground(fg);
+            }
+            return comp;
         }
     }
 
