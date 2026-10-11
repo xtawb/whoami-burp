@@ -4,6 +4,7 @@ import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.core.Annotations;
 import burp.api.montoya.core.HighlightColor;
+import burp.api.montoya.core.Registration;
 import burp.api.montoya.http.message.Cookie;
 import burp.api.montoya.http.message.HttpHeader;
 import burp.api.montoya.http.message.HttpRequestResponse;
@@ -49,7 +50,7 @@ import javax.swing.JOptionPane;
 public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler,
         ContextMenuItemsProvider, WhoAmITab.Actions, Store.Listener {
 
-    static final String VERSION = "0.4.0";
+    static final String VERSION = "0.5.0";
     private static final String ACCOUNTS_KEY = "whoami.accounts.v1";
     private static final String REMEMBER_KEY = "whoami.rememberInProject";
 
@@ -58,6 +59,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
     private PersistedObject projectData;
     WhoAmITab tab;                       // package-private: the harness inspects these
     final Store store = new Store();
+    private final Map<String, Registration> sessionActions = new HashMap<>();    // one per account, for Burp's session handling
 
     @Override
     public void initialize(MontoyaApi api) {
@@ -78,10 +80,61 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
         api.userInterface().registerContextMenuItemsProvider(this);
         api.proxy().registerRequestHandler(this);
         api.proxy().registerResponseHandler(this);
-        api.extension().registerUnloadingHandler(() -> { });
+        api.extension().registerUnloadingHandler(this::unload);
 
+        syncSessionActions();
         tab.setAccounts(store.all());
         api.logging().logToOutput("WhoAmI " + VERSION + " loaded with " + store.size() + " account(s).");
+    }
+
+    /**
+     * Offer one session-handling action per account, so a session handling rule can send
+     * Repeater / Intruder / Scanner traffic as that account. Reconciles with the store: a new
+     * account gains an action, a deleted one loses it. An account's name and session stay live,
+     * so a rename or a rotated cookie needs no change here.
+     */
+    private void syncSessionActions() {
+        if (api == null) {
+            return;
+        }
+        synchronized (sessionActions) {
+            java.util.Set<String> current = new java.util.HashSet<>();
+            for (Identity account : store.all()) {
+                current.add(account.id());
+                if (!sessionActions.containsKey(account.id())) {
+                    try {
+                        sessionActions.put(account.id(), api.http().registerSessionHandlingAction(
+                                new AccountSessionAction(store, account.id())));
+                    } catch (RuntimeException e) {
+                        api.logging().logToError("WhoAmI: could not register a session-handling action: " + e);
+                    }
+                }
+            }
+            for (java.util.Iterator<Map.Entry<String, Registration>> it = sessionActions.entrySet().iterator(); it.hasNext(); ) {
+                Map.Entry<String, Registration> entry = it.next();
+                if (!current.contains(entry.getKey())) {
+                    try {
+                        entry.getValue().deregister();
+                    } catch (RuntimeException ignored) {
+                        // already gone
+                    }
+                    it.remove();
+                }
+            }
+        }
+    }
+
+    private void unload() {
+        synchronized (sessionActions) {
+            sessionActions.values().forEach(r -> {
+                try {
+                    r.deregister();
+                } catch (RuntimeException ignored) {
+                    // Burp is unloading us anyway
+                }
+            });
+            sessionActions.clear();
+        }
     }
 
     private boolean rememberPreference() {
@@ -276,22 +329,23 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
 
     private void sendAs(HttpRequest request, Identity identity) {
         try {
-            HttpRequest out = stripSession(request);
-            String label;
-            if (identity == null) {
-                label = "WhoAmI: no session";
-            } else {
-                for (String[] header : identity.headerPairs()) {
-                    out = out.hasHeader(header[0]) ? out.withUpdatedHeader(header[0], header[1])
-                            : out.withAddedHeader(header[0], header[1]);
-                }
-                label = "WhoAmI: " + identity.name();
-            }
+            HttpRequest out = identity == null ? stripSession(request) : applyAccount(request, identity);
+            String label = identity == null ? "WhoAmI: no session" : "WhoAmI: " + identity.name();
             api.repeater().sendToRepeater(out, label);
             tab.setStatus("Sent to Repeater (" + label + ").");
         } catch (RuntimeException e) {
             api.logging().logToError("WhoAmI: could not send to Repeater: " + e);
         }
+    }
+
+    /** `request` with its own session headers removed and `identity`'s put in their place. */
+    static HttpRequest applyAccount(HttpRequest request, Identity identity) {
+        HttpRequest out = stripSession(request);
+        for (String[] header : identity.headerPairs()) {
+            out = out.hasHeader(header[0]) ? out.withUpdatedHeader(header[0], header[1])
+                    : out.withAddedHeader(header[0], header[1]);
+        }
+        return out;
     }
 
     static HttpRequest stripSession(HttpRequest request) {
@@ -432,6 +486,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
 
     @Override
     public void storeChanged() {
+        syncSessionActions();
         if (tab != null) {
             tab.setAccounts(store.all());
         }

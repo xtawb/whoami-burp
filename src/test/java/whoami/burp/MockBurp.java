@@ -40,6 +40,8 @@ final class MockBurp {
     final List<String> output = Collections.synchronizedList(new ArrayList<>());
     final List<Object[]> repeater = Collections.synchronizedList(new ArrayList<>());   // {HttpRequest, tabName}
     final List<HttpRequest> history = Collections.synchronizedList(new ArrayList<>());
+    final List<burp.api.montoya.http.sessions.SessionHandlingAction> sessionActions = Collections.synchronizedList(new ArrayList<>());
+    final List<String> deregistered = Collections.synchronizedList(new ArrayList<>());
     volatile Component suiteTab;
 
     MockBurp() {
@@ -177,6 +179,13 @@ final class MockBurp {
                 "response", a -> (HttpResponse) null));
     }
 
+    static burp.api.montoya.http.sessions.SessionHandlingActionData actionData(HttpRequest request) {
+        return mock(burp.api.montoya.http.sessions.SessionHandlingActionData.class, Map.of(
+                "request", a -> request,
+                "macroRequestResponses", a -> new ArrayList<>(),
+                "annotations", a -> annotations(null)));
+    }
+
     static ContextMenuEvent contextMenuEvent(HttpRequest request) {
         List<HttpRequestResponse> selected = new ArrayList<>();
         selected.add(requestResponse(request));
@@ -219,8 +228,16 @@ final class MockBurp {
                 }));
         Object repeaterApi = mock(burp.api.montoya.repeater.Repeater.class, Map.of(
                 "sendToRepeater", a -> { repeater.add(new Object[]{a[0], a.length > 1 ? a[1] : ""}); return null; }));
+        Object http = mock(burp.api.montoya.http.Http.class, Map.of(
+                "registerSessionHandlingAction", a -> {
+                    burp.api.montoya.http.sessions.SessionHandlingAction action =
+                            (burp.api.montoya.http.sessions.SessionHandlingAction) a[0];
+                    sessionActions.add(action);
+                    return mock(burp.api.montoya.core.Registration.class, Map.of(
+                            "deregister", x -> { deregistered.add(action.name()); sessionActions.remove(action); return null; }));
+                }));
         return mock(MontoyaApi.class, Map.of(
                 "persistence", a -> persistence, "userInterface", a -> ui, "extension", a -> extension,
-                "logging", a -> logging, "proxy", a -> proxy, "repeater", a -> repeaterApi));
+                "logging", a -> logging, "proxy", a -> proxy, "repeater", a -> repeaterApi, "http", a -> http));
     }
 }

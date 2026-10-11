@@ -61,6 +61,7 @@ public final class Harness {
         namingAndClassificationTests();
         hostileInput();
         extensionAgainstMockedBurp();
+        sessionHandlingTests();
         System.out.println("harness: " + checks + " checks passed");
         System.exit(0);
     }
@@ -501,6 +502,34 @@ public final class Harness {
         check(burp.repeater.size() == 2, "it opens one Repeater tab per account: " + burp.repeater.size());
 
         System.out.println("extension against mocked Burp: ok");
+    }
+
+    // ── Phase 3: Burp session-handling integration ────────────────────────────
+
+    private static void sessionHandlingTests() throws Exception {
+        MockBurp burp = new MockBurp();
+        WhoAmIExtension ext = new WhoAmIExtension();
+        ext.initialize(burp.api());
+        check(burp.sessionActions.isEmpty(), "with no accounts there are no session-handling actions");
+
+        Identity admin = ext.store.create("Admin", "CYAN", "acme.io", sessionHeaders("sid=ADMINSID9999"), 1);
+        ext.store.add(admin);
+        check(burp.sessionActions.size() == 1 && burp.sessionActions.get(0).name().equals("WhoAmI: Admin"),
+                "saving an account registers a session-handling action named for it");
+
+        HttpRequest bare = MockBurp.request("https://acme.io/api", "GET", hdrs("Accept", "*/*"));
+        burp.sessionActions.get(0).performAction(MockBurp.actionData(bare));        // must not throw
+        HttpRequest applied = WhoAmIExtension.applyAccount(bare, admin);
+        check(applied.hasHeader("Cookie") && applied.headerValue("Cookie").contains("ADMINSID9999"),
+                "the action applies the account's session to a request");
+
+        ext.rename(admin.id(), "Administrator");
+        check(burp.sessionActions.get(0).name().equals("WhoAmI: Administrator"), "the action name follows a rename, live");
+
+        ext.delete(admin.id());
+        check(burp.sessionActions.isEmpty() && !burp.deregistered.isEmpty(), "deleting an account deregisters its action");
+
+        System.out.println("session-handling actions: ok");
     }
 
     private static void waitUntil(java.util.function.BooleanSupplier cond, String what) throws Exception {

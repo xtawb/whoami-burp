@@ -38,6 +38,12 @@ One jar, no dependencies, Burp Suite Community and Professional.
   does this do unauthenticated" — and *Send as every account* opens one
   Repeater tab per account, the same request as each, for an authorization
   check in one click.
+- **Use an account in Repeater, Intruder and Scanner.** Each account is
+  registered as a Burp **session-handling action**. Add a rule in *Project
+  options → Sessions* whose action is *Invoke a Burp extension → WhoAmI:
+  &lt;account&gt;*, scope it to your target, and those tools send their requests
+  with that account's session — kept current by the extension, so a rotated
+  cookie is applied without touching the rule.
 - **Read the token.** For a JWT, the tab shows its subject, its role/scope and
   when it expires (an expired one in red), and a per-account count of the
   requests seen wearing it since the extension loaded.
@@ -77,7 +83,8 @@ JDK 17 or newer.
 
 | Class | Role |
 |---|---|
-| `WhoAmIExtension` | the Montoya glue: proxy handlers, the context menu, persistence |
+| `WhoAmIExtension` | the Montoya glue: proxy handlers, the context menu, session-handling actions, persistence |
+| `AccountSessionAction` | one account as a Burp session-handling action |
 | `WhoAmITab` | the Swing tab |
 | `Store` | the saved accounts and the rule that matches a request to one |
 | `Discovery` | grouping the proxy history into one candidate account per session |
