@@ -21,7 +21,6 @@ import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +39,7 @@ final class MockBurp {
     final Map<String, Boolean> preferences = Collections.synchronizedMap(new HashMap<>());
     final List<String> output = Collections.synchronizedList(new ArrayList<>());
     final List<Object[]> repeater = Collections.synchronizedList(new ArrayList<>());   // {HttpRequest, tabName}
+    final List<HttpRequest> history = Collections.synchronizedList(new ArrayList<>());
     volatile Component suiteTab;
 
     MockBurp() {
@@ -208,7 +208,15 @@ final class MockBurp {
                 "logToError", a -> { output.add("ERROR " + a[0]); return null; }));
         Object proxy = mock(burp.api.montoya.proxy.Proxy.class, Map.of(
                 "registerRequestHandler", a -> mock(burp.api.montoya.core.Registration.class, Map.of()),
-                "registerResponseHandler", a -> mock(burp.api.montoya.core.Registration.class, Map.of())));
+                "registerResponseHandler", a -> mock(burp.api.montoya.core.Registration.class, Map.of()),
+                "history", a -> {
+                    List<burp.api.montoya.proxy.ProxyHttpRequestResponse> items = new ArrayList<>();
+                    for (HttpRequest request : history) {
+                        items.add(mock(burp.api.montoya.proxy.ProxyHttpRequestResponse.class,
+                                Map.of("finalRequest", x -> request)));
+                    }
+                    return items;
+                }));
         Object repeaterApi = mock(burp.api.montoya.repeater.Repeater.class, Map.of(
                 "sendToRepeater", a -> { repeater.add(new Object[]{a[0], a.length > 1 ? a[1] : ""}); return null; }));
         return mock(MontoyaApi.class, Map.of(

@@ -13,19 +13,30 @@ One jar, no dependencies, Burp Suite Community and Professional.
 - **Save an account.** Right-click any request → **WhoAmI: Save as new
   account**. Its Cookie, Authorization, CSRF and API-key headers are captured
   under a name you give and a colour picked for you.
+- **Find the accounts already in your history.** *Scan HTTP history* groups the
+  proxy history by session and lists each account it finds — **one per
+  session, so a site you browsed as two users comes back as two accounts**,
+  told apart by the cookie or token that differs. Select the ones you want and
+  *Save*. A cookie the server rotated mid-session does not split an account in
+  two (requests are also linked by JWT subject).
 - **See who is who.** Every request in the proxy that carries a saved
   account's session is highlighted in that account's colour and commented with
   its name — so a glance down the history tells you which account made what.
+  The colours are Burp's own nine (the only ones a row can take); the tab
+  shows them as modern chips.
 - **Stay current.** When the server rotates a session cookie (a `Set-Cookie`
   on that account's traffic) the saved account follows it, and a bearer token
   that is re-issued for the same JWT subject is adopted too. No re-saving after
   a token refresh.
 - **Send as someone else.** Right-click a request → **WhoAmI: Send as →** an
   account, and it opens in Repeater wearing that account's session, in a named
-  tab. *Send as (no session)* strips the session instead — the quickest check
-  for "what does this do unauthenticated".
+  tab. *Send as (no session)* strips the session — the quickest check for "what
+  does this do unauthenticated" — and *Send as every account* opens one
+  Repeater tab per account, the same request as each, for an authorization
+  check in one click.
 - **Read the token.** For a JWT, the tab shows its subject, its role/scope and
-  when it expires, and marks it when it has.
+  when it expires (an expired one in red), and a per-account count of the
+  requests seen wearing it since the extension loaded.
 
 ## The tab
 
@@ -59,6 +70,7 @@ JDK 17 or newer.
 | `WhoAmIExtension` | the Montoya glue: proxy handlers, the context menu, persistence |
 | `WhoAmITab` | the Swing tab |
 | `Store` | the saved accounts and the rule that matches a request to one |
+| `Discovery` | grouping the proxy history into one candidate account per session |
 | `Identity` | one account: its headers, its colour, its serialization |
 | `Credentials` | which headers carry a session, and what identifies an account |
 | `Jwt` · `Json` | reading what a JWT claims (never verifying it) |
@@ -68,8 +80,9 @@ JDK 17 or newer.
 `./gradlew harness` loads the real extension class against dynamic proxies of
 the Montoya interfaces and drives it: an account loaded from the project file,
 a request recognised and coloured, a cookie refreshed from a `Set-Cookie`, a
-token adopted on a subject match, *Send as* and *Send as (no session)* through
-Repeater, and the project-file persistence turned on and off. It also feeds the
+token adopted on a subject match, *Send as* / *Send as (no session)* / *Send as
+every account* through Repeater, two sessions discovered in a history and saved
+as accounts, and the project-file persistence turned on and off. It also feeds the
 parsers input written to make them hang — a JWT that nests without end, a
 megabyte of claims, fifty thousand cookies — and requires that they stay quick
 and never throw. CI runs it on Linux and Windows for every push.
@@ -82,7 +95,8 @@ The account sharing the most such values wins; the most recently used breaks a
 tie. So:
 
 - Colouring starts when the extension is loaded. It reads the live proxy
-  stream, not history already captured.
+  stream, not history already captured — use *Scan HTTP history* for traffic
+  from before.
 - Two accounts that happen to share a value (the same CSRF token, say) can be
   told apart only by the values they do not share.
 - It reads a JWT; it does not check its signature. Nothing it shows proves a

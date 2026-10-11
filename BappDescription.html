@@ -5,20 +5,24 @@ request belongs to which account, and replay a request as any of them.</p>
 <ul>
 	<li>Save an account from any request: its Cookie, Authorization, CSRF and API-key headers are captured under a name
 		and a colour.</li>
-	<li>Every request in the proxy that carries a saved account's session is highlighted in that account's colour and
-		commented with its name.</li>
+	<li>Find the accounts already in the proxy history: a scan groups the history by session and lists each account it
+		finds, one per session — so a site browsed as two users comes back as two accounts, told apart by the cookie or
+		token that differs. Select and save the ones you want.</li>
+	<li>Every request in the proxy that carries a saved account's session is highlighted in that account's colour (one of
+		Burp's nine) and commented with its name.</li>
 	<li>Sessions stay current: a cookie the server rotates (Set-Cookie) is followed, and a bearer token re-issued for the
 		same JWT subject is adopted, without re-saving the account.</li>
-	<li>Send a request to Repeater as any saved account — its session swapped in, in a named tab — or as no session at
-		all, to see the unauthenticated behaviour.</li>
-	<li>For a JWT, the tab shows its subject, role / scope and expiry, and marks it when it has expired. The token is
-		read, never verified.</li>
+	<li>Send a request to Repeater as any saved account — its session swapped in, in a named tab — as no session at all,
+		or as every account at once (one tab each) for an authorization check.</li>
+	<li>For a JWT, the tab shows its subject, role / scope and expiry, and marks an expired one; it also counts the
+		requests seen wearing each account. The token is read, never verified.</li>
 	<li>Session values are masked in the tab by default, since they are live credentials; a toggle reveals them.</li>
 </ul>
 
 <p>Usage</p>
 <ol>
-	<li>Right-click a request and choose "WhoAmI: Save as new account"; give it a name.</li>
+	<li>Right-click a request and choose "WhoAmI: Save as new account"; give it a name. Or press "Scan HTTP history" to
+		find the accounts already in your traffic and save them.</li>
 	<li>Browse: requests carrying that account's session are coloured and labelled in the proxy history.</li>
 	<li>Right-click any request and choose "WhoAmI: Send as" to open it in Repeater as another account.</li>
 </ol>

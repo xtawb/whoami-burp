@@ -27,6 +27,8 @@ final class Identity {
     private final long createdAt;
     private long updatedAt;
     private final LinkedHashMap<String, String> headers;
+    private final java.util.concurrent.atomic.AtomicInteger seen = new java.util.concurrent.atomic.AtomicInteger();
+    private volatile long lastSeen;         // both transient: activity since the extension loaded
 
     Identity(String id, String name, String colour, String note, String host,
              long createdAt, long updatedAt, LinkedHashMap<String, String> headers) {
@@ -82,6 +84,20 @@ final class Identity {
 
     void touch(long now) {
         this.updatedAt = now;
+    }
+
+    /** A request wearing this account's session just went by. Counts since the extension loaded. */
+    void noteSeen(long now) {
+        seen.incrementAndGet();
+        lastSeen = now;
+    }
+
+    int seenCount() {
+        return seen.get();
+    }
+
+    long lastSeen() {
+        return lastSeen;
     }
 
     /** The session headers, name → value, in the order they will be sent. A copy. */

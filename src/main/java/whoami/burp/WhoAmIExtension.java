@@ -10,6 +10,7 @@ import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
 import burp.api.montoya.persistence.PersistedObject;
 import burp.api.montoya.persistence.Preferences;
+import burp.api.montoya.proxy.ProxyHttpRequestResponse;
 import burp.api.montoya.proxy.http.InterceptedRequest;
 import burp.api.montoya.proxy.http.InterceptedResponse;
 import burp.api.montoya.proxy.http.ProxyRequestHandler;
@@ -23,9 +24,11 @@ import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider;
 import java.awt.Component;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
@@ -46,7 +49,7 @@ import javax.swing.JOptionPane;
 public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler,
         ContextMenuItemsProvider, WhoAmITab.Actions, Store.Listener {
 
-    static final String VERSION = "0.1.0";
+    static final String VERSION = "0.2.0";
     private static final String ACCOUNTS_KEY = "whoami.accounts.v1";
     private static final String REMEMBER_KEY = "whoami.rememberInProject";
 
@@ -103,6 +106,7 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
                 }
             }
             if (identity != null) {
+                identity.noteSeen(now());
                 // mutate the request's own annotations: a comment the user already wrote is kept
                 Annotations annotations = request.annotations();
                 if (annotations.notes() == null || annotations.notes().isBlank()) {
@@ -193,6 +197,17 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
             none.addActionListener(e -> sendAs(request, null));
             sendAs.add(none);
             items.add(sendAs);
+
+            if (store.size() > 1) {
+                // one Repeater tab per account: the same request, each account's session — an authorization check
+                JMenuItem every = new JMenuItem("WhoAmI: Send as every account (" + store.size() + ")");
+                every.addActionListener(e -> {
+                    for (Identity identity : store.all()) {
+                        sendAs(request, identity);
+                    }
+                });
+                items.add(every);
+            }
         }
         return items;
     }
@@ -305,6 +320,75 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
     @Override
     public void clearAll() {
         store.clear();
+    }
+
+    // ── finding accounts already in the history ───────────────────────────────
+
+    @Override
+    public void scanHistory() {
+        Thread worker = new Thread(this::doScanHistory, "whoami-scan");
+        worker.setDaemon(true);
+        worker.start();
+    }
+
+    private void doScanHistory() {
+        try {
+            List<Discovery.Request> requests = new ArrayList<>();
+            int total = 0;
+            for (ProxyHttpRequestResponse item : api.proxy().history()) {
+                HttpRequest request = item.finalRequest();
+                if (request == null) {
+                    continue;
+                }
+                total++;
+                LinkedHashMap<String, String> session = sessionHeadersOf(request);
+                if (!session.isEmpty()) {
+                    requests.add(new Discovery.Request(hostOf(request.url()), pathOf(request.url()), session));
+                }
+            }
+            List<Discovery.Candidate> candidates = Discovery.cluster(requests);
+            List<WhoAmITab.Discovered> toShow = new ArrayList<>();
+            int known = 0;
+            synchronized (store) {
+                Map<String, Integer> perHost = new HashMap<>();
+                for (Identity identity : store.all()) {
+                    perHost.merge(identity.host(), 1, Integer::sum);
+                }
+                for (Discovery.Candidate candidate : candidates) {
+                    if (store.match(candidate.headers) != null) {
+                        known++;                            // already saved: nothing to offer
+                        continue;
+                    }
+                    String name = candidate.subject.isEmpty()
+                            ? (candidate.host.isEmpty() ? "account" : candidate.host) + " #" + perHost.merge(candidate.host, 1, Integer::sum)
+                            : candidate.subject;
+                    toShow.add(new WhoAmITab.Discovered(name, candidate.host, candidate.requests,
+                            candidate.subject, candidate.samplePath, candidate.headers));
+                }
+            }
+            tab.setDiscovered(toShow);
+            api.logging().logToOutput("WhoAmI: scanned " + total + " request(s); " + toShow.size()
+                    + " new account(s), " + known + " already saved.");
+        } catch (RuntimeException e) {
+            api.logging().logToError("WhoAmI: history scan failed: " + e);
+            tab.setStatus("History scan failed: " + e.getClass().getSimpleName());
+        }
+    }
+
+    @Override
+    public void saveDiscovered(WhoAmITab.Discovered discovered) {
+        Identity identity = store.create(discovered.suggestedName, store.nextColour(), discovered.host,
+                discovered.headers, now());
+        store.add(identity);
+    }
+
+    private static String pathOf(String url) {
+        try {
+            String path = URI.create(url).getPath();
+            return path == null || path.isEmpty() ? "/" : path;
+        } catch (IllegalArgumentException e) {
+            return "";
+        }
     }
 
     @Override

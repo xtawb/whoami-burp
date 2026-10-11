@@ -56,6 +56,7 @@ public final class Harness {
         credentialTests();
         identityTests();
         storeTests();
+        discoveryTests();
         hostileInput();
         extensionAgainstMockedBurp();
         System.out.println("harness: " + checks + " checks passed");
@@ -240,6 +241,31 @@ public final class Harness {
         return session(sidValue);
     }
 
+    // ── discovery ────────────────────────────────────────────────────────────
+
+    private static Discovery.Request req(String host, String path, String... headerNameValues) {
+        return new Discovery.Request(host, path, Credentials.sessionHeaders(hdrs(headerNameValues)));
+    }
+
+    private static void discoveryTests() {
+        String alice = "Bearer " + jwt("{\"sub\":\"alice\",\"exp\":1}");
+        String aliceLater = "Bearer " + jwt("{\"sub\":\"alice\",\"exp\":2}");
+        List<Discovery.Request> history = List.of(
+                req("acme.io", "/a", "Cookie", "sid=AAAAAAAA10"),
+                req("acme.io", "/b", "Cookie", "sid=AAAAAAAA10", "Authorization", alice),  // richest for alice
+                req("acme.io", "/c", "Cookie", "sid=ROTATED999", "Authorization", aliceLater),  // cookie rotated, same subject
+                req("acme.io", "/d", "Cookie", "sid=BBBBBBBB20"),                         // a second account
+                req("acme.io", "/pub"));                                                  // anonymous
+        List<Discovery.Candidate> found = Discovery.cluster(history);
+        check(found.size() == 2, "two accounts are found on one site, the anonymous request ignored: " + found.size());
+        check(found.get(0).requests == 3 && found.get(0).subject.equals("alice"),
+                "cookie rotation does not split an account: " + found.get(0).requests);
+        check(found.get(0).headers.containsKey("Authorization") && found.get(0).headers.containsKey("Cookie"),
+                "the richest session is the candidate's, ready to save");
+        check(found.get(1).requests == 1 && found.get(1).subject.isEmpty(), "the second account is separate");
+        check(Discovery.cluster(List.of(req("x", "/", "Accept", "*/*"))).isEmpty(), "no session means no candidate");
+    }
+
     // ── the extension against a mocked Burp ───────────────────────────────────
 
     private static void extensionAgainstMockedBurp() throws Exception {
@@ -281,6 +307,8 @@ public final class Harness {
         // the server rotates the admin's session cookie: the stored account follows
         HttpRequest initiating = MockBurp.request("https://acme.io/login", "POST", hdrs("Cookie", "sid=ADMINSID123"));
         List<Cookie> setCookies = List.of(MockBurp.cookie("sid", "ADMINSID999"));
+        check(ext.store.get(adminId).seenCount() >= 2, "matched requests are counted as seen: " + ext.store.get(adminId).seenCount());
+
         ext.handleResponseReceived(MockBurp.interceptedResponse(initiating, setCookies));
         check(ext.store.get(adminId).headerValue("Cookie").contains("ADMINSID999"), "a Set-Cookie refreshes the stored account");
         check(reloaded(burp).get(adminId).headerValue("Cookie").contains("ADMINSID999"),
@@ -327,7 +355,53 @@ public final class Harness {
         ext.clearAll();
         check(ext.store.size() == 0, "clear empties the store");
 
+        // discovery end to end: two sessions in the history become two accounts, then are known
+        burp.history.add(MockBurp.request("https://shop.acme.io/a", "GET", hdrs("Cookie", "sid=USERAAAA1111")));
+        burp.history.add(MockBurp.request("https://shop.acme.io/b", "GET",
+                hdrs("Cookie", "sid=USERAAAA1111", "Authorization", "Bearer " + jwt("{\"sub\":\"u1\",\"exp\":9}"))));
+        burp.history.add(MockBurp.request("https://shop.acme.io/c", "GET", hdrs("Cookie", "sid=USERBBBB2222")));
+        burp.history.add(MockBurp.request("https://shop.acme.io/pub", "GET", hdrs("Accept", "*/*")));
+        ext.scanHistory();
+        waitUntil(() -> ext.tab.discoveredCount() == 2, "the history scan finds the two sessions");
+        for (WhoAmITab.Discovered d : ext.tab.discoveredSnapshot()) {
+            ext.saveDiscovered(d);
+        }
+        check(ext.store.size() == 2, "discovered sessions can be saved as accounts");
+        ext.scanHistory();
+        waitUntil(() -> ext.tab.discoveredCount() == 0, "a second scan offers nothing already saved");
+        check(ext.store.size() == 2, "…and adds no duplicates");
+
+        // "Send as every account": one Repeater tab per account
+        burp.repeater.clear();
+        HttpRequest anyRequest = MockBurp.request("https://shop.acme.io/thing", "GET", hdrs("Accept", "*/*"));
+        List<java.awt.Component> onAny = ext.provideMenuItems(MockBurp.contextMenuEvent(anyRequest));
+        JMenuItem every = itemNamed(onAny, "WhoAmI: Send as every account (2)");
+        check(every != null, "send-as-every-account is offered when there is more than one account");
+        SwingUtilities.invokeAndWait(every::doClick);
+        check(burp.repeater.size() == 2, "it opens one Repeater tab per account: " + burp.repeater.size());
+
         System.out.println("extension against mocked Burp: ok");
+    }
+
+    private static void waitUntil(java.util.function.BooleanSupplier cond, String what) throws Exception {
+        long end = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < end) {
+            SwingUtilities.invokeAndWait(() -> { });
+            if (cond.getAsBoolean()) {
+                break;
+            }
+            Thread.sleep(50);
+        }
+        check(cond.getAsBoolean(), what);
+    }
+
+    private static JMenuItem itemNamed(List<java.awt.Component> items, String text) {
+        for (java.awt.Component c : items) {
+            if (c instanceof JMenuItem && text.equals(((JMenuItem) c).getText())) {
+                return (JMenuItem) c;
+            }
+        }
+        return null;
     }
 
     /** The store as it would come back from the project file: proof that a change was persisted. */
