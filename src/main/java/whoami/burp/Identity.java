@@ -178,6 +178,42 @@ final class Identity {
         return changed;
     }
 
+    /**
+     * Is a Set-Cookie on a matched request a real rotation of <em>this</em> account's session,
+     * rather than a different account logging in under the same cookie name?
+     *
+     * Yes only when the request still matched this account by a value the Set-Cookie does
+     * <em>not</em> replace — a stable anchor: another session cookie, or a bearer token. Logging
+     * out and in reuses the cookie name with a new value while the old value is still sent, so a
+     * single-cookie session has no anchor and its new value is not adopted. That keeps one
+     * account's colour from following another account's login.
+     *
+     * `requestValues` are the request's identifying values ({@link Credentials#identifyingValues}).
+     */
+    boolean isRotationAnchored(Map<String, String> fresh, Set<String> requestValues) {
+        String current = headerValue("Cookie");
+        if (current == null) {
+            return false;
+        }
+        LinkedHashMap<String, String> cookies = Credentials.cookies(current);
+        Set<String> replaced = new java.util.HashSet<>();
+        for (Map.Entry<String, String> set : fresh.entrySet()) {
+            if (!set.getValue().isEmpty() && cookies.containsKey(set.getKey())
+                    && !set.getValue().equals(cookies.get(set.getKey()))) {
+                replaced.add(cookies.get(set.getKey()));        // this account's value that would change
+            }
+        }
+        if (replaced.isEmpty()) {
+            return false;                                       // nothing of ours would change
+        }
+        for (String mine : identifyingValues()) {
+            if (requestValues.contains(mine) && !replaced.contains(mine)) {
+                return true;                                    // something stable confirmed it is still us
+            }
+        }
+        return false;
+    }
+
     /** Replace every session header with those just captured (a re-login through the proxy). */
     void replaceHeaders(LinkedHashMap<String, String> fresh, long now) {
         headers.clear();

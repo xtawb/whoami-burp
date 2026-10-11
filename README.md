@@ -99,6 +99,13 @@ tie. So:
   from before.
 - Two accounts that happen to share a value (the same CSRF token, say) can be
   told apart only by the values they do not share.
+- A cookie the server rotates is adopted only when something stable confirms
+  the session is still the same account — another session cookie or a bearer
+  token. Logging out and in as a different user reuses the cookie name with a
+  new value, so a single-cookie session that is rotated this way is *not*
+  followed (that is how one account avoids swallowing another's login); the
+  account simply stops matching. Right-click a fresh request →
+  *WhoAmI: Update "…" from this request* to re-point it.
 - It reads a JWT; it does not check its signature. Nothing it shows proves a
   token is genuine or unexpired on the server — only what the token asserts.
 

@@ -49,7 +49,7 @@ import javax.swing.JOptionPane;
 public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler, ProxyResponseHandler,
         ContextMenuItemsProvider, WhoAmITab.Actions, Store.Listener {
 
-    static final String VERSION = "0.2.0";
+    static final String VERSION = "0.2.1";
     private static final String ACCOUNTS_KEY = "whoami.accounts.v1";
     private static final String REMEMBER_KEY = "whoami.rememberInProject";
 
@@ -138,8 +138,12 @@ public final class WhoAmIExtension implements BurpExtension, ProxyRequestHandler
                 }
                 if (!fresh.isEmpty()) {
                     synchronized (store) {
-                        Identity identity = store.match(sessionHeadersOf(request));
-                        if (identity != null && identity.updateCookies(fresh, now())) {
+                        LinkedHashMap<String, String> session = sessionHeadersOf(request);
+                        Identity identity = store.match(session);
+                        // adopt a rotated cookie only when something stable confirms it is still this
+                        // account — never when a different account has just logged in on the same cookie
+                        if (identity != null && identity.isRotationAnchored(fresh, Credentials.identifyingValues(session))
+                                && identity.updateCookies(fresh, now())) {
                             store.changed();
                             tab.setStatus("Refreshed \"" + identity.name() + "\" cookies from the server.");
                         }

@@ -191,6 +191,23 @@ public final class Harness {
         replacement.put("Cookie", "sid=REPLACED99");
         b.replaceHeaders(replacement, t + 7);
         check(b.headers().size() == 1 && b.headerValue("Cookie").equals("sid=REPLACED99"), "headers can be replaced wholesale");
+
+        // a rotation is adopted only with a stable anchor: otherwise a different login would steal the account
+        LinkedHashMap<String, String> anchored = new LinkedHashMap<>();
+        anchored.put("Cookie", "sid=OLDSID1234");
+        anchored.put("Authorization", "Bearer " + jwt("{\"sub\":\"alice\",\"exp\":1}"));
+        Identity withAnchor = new Identity("id-3", "Alice", "CYAN", "", "acme.io", t, t, anchored);
+        java.util.Set<String> anchorReq = Credentials.identifyingValues(Credentials.sessionHeaders(
+                hdrs("Cookie", "sid=OLDSID1234", "Authorization", anchored.get("Authorization"))));
+        check(withAnchor.isRotationAnchored(Map.of("sid", "NEWSID9999"), anchorReq),
+                "a cookie rotation with a stable anchor is a real rotation");
+
+        LinkedHashMap<String, String> single = new LinkedHashMap<>();
+        single.put("Cookie", "sid=OLDSID1234");
+        Identity soloCookie = new Identity("id-4", "Solo", "CYAN", "", "acme.io", t, t, single);
+        java.util.Set<String> soloReq = Credentials.identifyingValues(Credentials.sessionHeaders(hdrs("Cookie", "sid=OLDSID1234")));
+        check(!soloCookie.isRotationAnchored(Map.of("sid", "NEWSID9999"), soloReq),
+                "a new value on a single-cookie session is not treated as a rotation");
     }
 
     // ── store ────────────────────────────────────────────────────────────────
@@ -271,9 +288,12 @@ public final class Harness {
     private static void extensionAgainstMockedBurp() throws Exception {
         MockBurp burp = new MockBurp();
 
-        // an account saved in an earlier session, in the project file
+        // an account saved in an earlier session, in the project file (a cookie plus a bearer token)
         Store seed = new Store();
-        seed.add(seed.create("Admin", "CYAN", "acme.io", session("ADMINSID123"), 100));
+        LinkedHashMap<String, String> adminHeaders = new LinkedHashMap<>();
+        adminHeaders.put("Cookie", "sid=ADMINSID123");
+        adminHeaders.put("Authorization", "Bearer " + jwt("{\"sub\":\"admin\",\"exp\":4102444800}"));
+        seed.add(seed.create("Admin", "CYAN", "acme.io", adminHeaders, 100));
         burp.projectData.put("whoami.accounts.v1", seed.serialize());
 
         WhoAmIExtension ext = new WhoAmIExtension();
@@ -304,15 +324,32 @@ public final class Harness {
                 hdrs("Accept", "*/*"), plain));
         check(plain.highlightColor() == HighlightColor.NONE && plain.notes() == null, "an anonymous request is not touched");
 
-        // the server rotates the admin's session cookie: the stored account follows
-        HttpRequest initiating = MockBurp.request("https://acme.io/login", "POST", hdrs("Cookie", "sid=ADMINSID123"));
-        List<Cookie> setCookies = List.of(MockBurp.cookie("sid", "ADMINSID999"));
         check(ext.store.get(adminId).seenCount() >= 2, "matched requests are counted as seen: " + ext.store.get(adminId).seenCount());
 
+        // the server rotates the admin's cookie on a request that still carries the admin's bearer
+        // token (the stable anchor): the stored account follows
+        HttpRequest initiating = MockBurp.request("https://acme.io/thing", "GET",
+                hdrs("Cookie", "sid=ADMINSID123", "Authorization", adminHeaders.get("Authorization")));
+        List<Cookie> setCookies = List.of(MockBurp.cookie("sid", "ADMINSID999"));
         ext.handleResponseReceived(MockBurp.interceptedResponse(initiating, setCookies));
         check(ext.store.get(adminId).headerValue("Cookie").contains("ADMINSID999"), "a Set-Cookie refreshes the stored account");
         check(reloaded(burp).get(adminId).headerValue("Cookie").contains("ADMINSID999"),
                 "the refreshed account is written back to the project file");
+
+        // the reported bug: log out of one account, log in as another on the same cookie name.
+        // the first account must not swallow the second's session, and the second must not show as the first.
+        Identity user = ext.store.create("User one", "GREEN", "acme.io", session("USERONE1111"), 200);
+        ext.store.add(user);
+        HttpRequest loginAsTwo = MockBurp.request("https://acme.io/login", "POST", hdrs("Cookie", "sid=USERONE1111"));
+        ext.handleResponseReceived(MockBurp.interceptedResponse(loginAsTwo, List.of(MockBurp.cookie("sid", "USERTWO2222"))));
+        check(ext.store.get(user.id()).headerValue("Cookie").contains("USERONE1111")
+                && !ext.store.get(user.id()).headerValue("Cookie").contains("USERTWO2222"),
+                "a different login does not overwrite the first account's cookie: " + ext.store.get(user.id()).headerValue("Cookie"));
+        Annotations asTwo = MockBurp.annotations(null);
+        ext.handleRequestReceived(MockBurp.interceptedRequest("https://acme.io/home", "GET", hdrs("Cookie", "sid=USERTWO2222"), asTwo));
+        check(asTwo.highlightColor() == HighlightColor.NONE && asTwo.notes() == null,
+                "the second account's own traffic is not coloured as the first");
+        ext.store.remove(user.id());
 
         // the context menu: save / update offered for a request with a session, send-as always
         HttpRequest withSession = MockBurp.request("https://acme.io/api", "GET", hdrs("Cookie", "sid=ADMINSID999"));
